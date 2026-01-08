@@ -1,5 +1,7 @@
 # Ares Contrib
 
+[中文文档](README.zh.md)
+
 Extended middleware and utilities for the Ares web framework.
 
 This package contains additional middleware that extends Ares functionality but is kept separate from the core framework to maintain its lightweight nature.

@@ -2,11 +2,13 @@ package jwt
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+	ae "github.com/xushuhui/ares/errors"
 )
 
 const (
@@ -59,6 +61,16 @@ func WithContextKey(key string) Option {
 	}
 }
 
+// jsonResponse is a helper function to write JSON error responses
+func jsonResponse(w http.ResponseWriter, statusCode int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(ae.Error{
+		Code:    statusCode,
+		Message: message,
+	})
+}
+
 // New returns a JWT middleware with signing key and optional configuration
 func New(signingKey []byte, opts ...Option) func(http.Handler) http.Handler {
 	o := &options{
@@ -72,7 +84,7 @@ func New(signingKey []byte, opts ...Option) func(http.Handler) http.Handler {
 
 	// Validate signing key
 	if o.signingKey == nil {
-		panic("jwt middleware requires signing key")
+		panic("signing key is nil")
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -80,7 +92,7 @@ func New(signingKey []byte, opts ...Option) func(http.Handler) http.Handler {
 			// Extract token from Authorization header
 			auths := strings.SplitN(r.Header.Get(authorizationKey), " ", 2)
 			if len(auths) != 2 || !strings.EqualFold(auths[0], bearerWord) {
-				http.Error(w, ErrMissingJwtToken.Error(), http.StatusUnauthorized)
+				jsonResponse(w, http.StatusUnauthorized, ErrMissingJwtToken.Error())
 				return
 			}
 			jwtToken := auths[1]
@@ -105,26 +117,26 @@ func New(signingKey []byte, opts ...Option) func(http.Handler) http.Handler {
 			if err != nil {
 				// Classify error types
 				if errors.Is(err, jwt.ErrTokenMalformed) || errors.Is(err, jwt.ErrTokenUnverifiable) {
-					http.Error(w, ErrTokenInvalid.Error(), http.StatusUnauthorized)
+					jsonResponse(w, http.StatusUnauthorized, ErrTokenInvalid.Error())
 					return
 				}
 				if errors.Is(err, jwt.ErrTokenNotValidYet) || errors.Is(err, jwt.ErrTokenExpired) {
-					http.Error(w, ErrTokenExpired.Error(), http.StatusUnauthorized)
+					jsonResponse(w, http.StatusUnauthorized, ErrTokenExpired.Error())
 					return
 				}
-				http.Error(w, ErrTokenParseFail.Error(), http.StatusUnauthorized)
+				jsonResponse(w, http.StatusUnauthorized, ErrTokenParseFail.Error())
 				return
 			}
 
 			// Validate token
 			if !tokenInfo.Valid {
-				http.Error(w, ErrTokenInvalid.Error(), http.StatusUnauthorized)
+				jsonResponse(w, http.StatusUnauthorized, ErrTokenInvalid.Error())
 				return
 			}
 
 			// Verify signing method
 			if tokenInfo.Method != o.signingMethod {
-				http.Error(w, ErrUnSupportSigningMethod.Error(), http.StatusUnauthorized)
+				jsonResponse(w, http.StatusUnauthorized, ErrUnSupportSigningMethod.Error())
 				return
 			}
 
