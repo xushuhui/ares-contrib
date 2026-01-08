@@ -10,6 +10,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// ErrorResponse represents the JSON error response structure
+type ErrorResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
 // TestJSONResponses verifies that all error responses are in JSON format
 func TestJSONResponses(t *testing.T) {
 	secret := []byte("test-secret")
@@ -18,25 +24,25 @@ func TestJSONResponses(t *testing.T) {
 		name           string
 		token          string
 		expectedStatus int
-		expectedError  string
+		expectedMsg    string
 	}{
 		{
 			name:           "Missing token returns JSON error",
 			token:          "",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  ErrMissingJwtToken.Error(),
+			expectedMsg:    ErrMissingJwtToken.Error(),
 		},
 		{
 			name:           "Invalid token returns JSON error",
 			token:          "invalid.token.here",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  ErrTokenInvalid.Error(),
+			expectedMsg:    ErrTokenInvalid.Error(),
 		},
 		{
 			name:           "Malformed token returns JSON error",
 			token:          "Bearer malformed",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  ErrTokenInvalid.Error(),
+			expectedMsg:    ErrTokenInvalid.Error(),
 		},
 	}
 
@@ -71,14 +77,19 @@ func TestJSONResponses(t *testing.T) {
 			}
 
 			// Check response body is valid JSON
-			var response map[string]string
+			var response ErrorResponse
 			if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 				t.Errorf("Failed to decode JSON response: %v", err)
 			}
 
-			// Check error field
-			if response["error"] != tt.expectedError {
-				t.Errorf("Expected error '%s', got '%s'", tt.expectedError, response["error"])
+			// Check code field
+			if response.Code != tt.expectedStatus {
+				t.Errorf("Expected code %d, got %d", tt.expectedStatus, response.Code)
+			}
+
+			// Check message field
+			if response.Message != tt.expectedMsg {
+				t.Errorf("Expected message '%s', got '%s'", tt.expectedMsg, response.Message)
 			}
 		})
 	}
@@ -114,13 +125,17 @@ func TestJSONResponseWithExpiredToken(t *testing.T) {
 	}
 
 	// Check JSON response
-	var response map[string]string
+	var response ErrorResponse
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Errorf("Failed to decode JSON response: %v", err)
 	}
 
-	if response["error"] != ErrTokenExpired.Error() {
-		t.Errorf("Expected error '%s', got '%s'", ErrTokenExpired.Error(), response["error"])
+	if response.Code != http.StatusUnauthorized {
+		t.Errorf("Expected code 401, got %d", response.Code)
+	}
+
+	if response.Message != ErrTokenExpired.Error() {
+		t.Errorf("Expected message '%s', got '%s'", ErrTokenExpired.Error(), response.Message)
 	}
 }
 
@@ -155,12 +170,16 @@ func TestJSONResponseWithWrongSigningMethod(t *testing.T) {
 	}
 
 	// Check JSON response
-	var response map[string]string
+	var response ErrorResponse
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Errorf("Failed to decode JSON response: %v", err)
 	}
 
-	if response["error"] != ErrUnSupportSigningMethod.Error() {
-		t.Errorf("Expected error '%s', got '%s'", ErrUnSupportSigningMethod.Error(), response["error"])
+	if response.Code != http.StatusUnauthorized {
+		t.Errorf("Expected code 401, got %d", response.Code)
+	}
+
+	if response.Message != ErrUnSupportSigningMethod.Error() {
+		t.Errorf("Expected message '%s', got '%s'", ErrUnSupportSigningMethod.Error(), response.Message)
 	}
 }

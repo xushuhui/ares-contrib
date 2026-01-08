@@ -240,3 +240,156 @@ func TestCORSMultipleOptions(t *testing.T) {
 		t.Error("Vary header should be set for non-wildcard origins")
 	}
 }
+
+// TestCORSWithNoOrigin tests requests without Origin header
+func TestCORSWithNoOrigin(t *testing.T) {
+	middleware := New(
+		WithAllowedOrigins([]string{"https://example.com"}),
+	)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Request without Origin header
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should still process the request
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rr.Code)
+	}
+
+	// Should not set Access-Control-Allow-Origin for requests without Origin header
+	// (implementation specific - some middleware still sets wildcard)
+}
+
+// TestCORSPreflightWithCustomHeaders tests preflight with custom request headers
+func TestCORSPreflightWithCustomHeaders(t *testing.T) {
+	middleware := New(
+		WithAllowedOrigins([]string{"https://example.com"}),
+		WithAllowedHeaders([]string{"X-Custom-Header", "Authorization"}),
+		WithMaxAge(600),
+	)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Handler should not be called for preflight request")
+	}))
+
+	req := httptest.NewRequest("OPTIONS", "/test", nil)
+	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "X-Custom-Header")
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("Expected status 204, got %d", rr.Code)
+	}
+
+	if rr.Header().Get("Access-Control-Max-Age") != "600" {
+		t.Errorf("Expected max age 600, got %s", rr.Header().Get("Access-Control-Max-Age"))
+	}
+}
+
+// TestCORSWildcardOriginNoCredentials tests wildcard origin doesn't allow credentials
+func TestCORSWildcardOriginNoCredentials(t *testing.T) {
+	middleware := New(
+		WithAllowCredentials(true), // Try to enable with wildcard origin
+	)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	// Should NOT set credentials header with wildcard origin
+	if rr.Header().Get("Access-Control-Allow-Credentials") == "true" {
+		t.Error("Wildcard origin should not allow credentials")
+	}
+
+	// Should still set wildcard origin
+	if rr.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Errorf("Expected wildcard origin, got '%s'", rr.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+// TestCORSDefaultConfiguration tests default CORS configuration
+func TestCORSDefaultConfiguration(t *testing.T) {
+	middleware := New()
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Check default headers are set
+	if rr.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Error("Expected wildcard origin by default")
+	}
+
+	if rr.Header().Get("Access-Control-Allow-Methods") == "" {
+		t.Error("Expected methods header by default")
+	}
+
+	if rr.Header().Get("Access-Control-Allow-Headers") == "" {
+		t.Error("Expected headers header by default")
+	}
+
+	if rr.Header().Get("Access-Control-Max-Age") == "" {
+		t.Error("Expected max age header by default")
+	}
+
+	// Wildcard origin should not have Vary header
+	if rr.Header().Get("Vary") != "" {
+		t.Error("Wildcard origin should not set Vary header")
+	}
+}
+
+// TestCORSMultipleOrigins tests multiple allowed origins
+func TestCORSMultipleOrigins(t *testing.T) {
+	middleware := New(
+		WithAllowedOrigins([]string{
+			"https://example.com",
+			"https://test.com",
+			"https://api.example.com",
+		}),
+	)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Test each allowed origin
+	origins := []string{
+		"https://example.com",
+		"https://test.com",
+		"https://api.example.com",
+	}
+
+	for _, origin := range origins {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Origin", origin)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Header().Get("Access-Control-Allow-Origin") != origin {
+			t.Errorf("Expected origin '%s', got '%s'", origin, rr.Header().Get("Access-Control-Allow-Origin"))
+		}
+
+		if rr.Header().Get("Vary") != "Origin" {
+			t.Error("Expected Vary: Origin header for specific origins")
+		}
+	}
+}
