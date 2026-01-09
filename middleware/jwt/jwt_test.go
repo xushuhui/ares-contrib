@@ -255,3 +255,288 @@ func TestJWTWithContextKey(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", rr.Code)
 	}
 }
+
+func TestGenerateToken(t *testing.T) {
+	secret := []byte("test-secret")
+
+	tests := []struct {
+		name        string
+		claims      jwt.Claims
+		opts        []Option
+		expectError bool
+	}{
+		{
+			name: "Generate token with MapClaims",
+			claims: jwt.MapClaims{
+				"user_id": "123",
+				"exp":     time.Now().Add(time.Hour).Unix(),
+			},
+			opts:        nil,
+			expectError: false,
+		},
+		{
+			name: "Generate token with custom signing method",
+			claims: jwt.MapClaims{
+				"user_id": "456",
+				"exp":     time.Now().Add(time.Hour).Unix(),
+			},
+			opts:        []Option{WithSigningMethod(jwt.SigningMethodHS512)},
+			expectError: false,
+		},
+		{
+			name: "Generate token with RegisteredClaims",
+			claims: &jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				Subject:   "test",
+			},
+			opts:        nil,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenString, err := GenerateToken(secret, tt.claims, tt.opts...)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			if tokenString == "" {
+				t.Error("Token string should not be empty")
+			}
+
+			// Verify the token can be parsed and validated
+			token, err := jwt.ParseWithClaims(tokenString, tt.claims, func(token *jwt.Token) (interface{}, error) {
+				return secret, nil
+			})
+
+			if err != nil {
+				t.Fatalf("Failed to parse generated token: %v", err)
+			}
+
+			if !token.Valid {
+				t.Error("Generated token should be valid")
+			}
+		})
+	}
+}
+
+func TestGenerateTokenWithNilKey(t *testing.T) {
+	claims := jwt.MapClaims{"user_id": "123"}
+
+	_, err := GenerateToken(nil, claims)
+	if err == nil {
+		t.Error("Expected error for nil signing key")
+	}
+	if err.Error() != "signing key is nil" {
+		t.Errorf("Expected 'signing key is nil' error, got %v", err)
+	}
+}
+
+func TestGenerateTokenWithDefaultClaims(t *testing.T) {
+	secret := []byte("test-secret")
+
+	tests := []struct {
+		name        string
+		claims      map[string]interface{}
+		expectError bool
+	}{
+		{
+			name: "Generate token with simple claims",
+			claims: map[string]interface{}{
+				"user_id": "123",
+				"exp":     time.Now().Add(time.Hour).Unix(),
+			},
+			expectError: false,
+		},
+		{
+			name: "Generate token with multiple fields",
+			claims: map[string]interface{}{
+				"user_id":  "456",
+				"username": "testuser",
+				"role":     "admin",
+				"exp":      time.Now().Add(2 * time.Hour).Unix(),
+				"iat":      time.Now().Unix(),
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenString, err := GenerateTokenWithDefaultClaims(secret, tt.claims)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Expected no error, got %v", err)
+			}
+
+			if tokenString == "" {
+				t.Error("Token string should not be empty")
+			}
+
+			// Verify the token can be parsed
+			mapClaims := jwt.MapClaims{}
+			token, err := jwt.ParseWithClaims(tokenString, mapClaims, func(token *jwt.Token) (interface{}, error) {
+				return secret, nil
+			})
+
+			if err != nil {
+				t.Fatalf("Failed to parse generated token: %v", err)
+			}
+
+			if !token.Valid {
+				t.Error("Generated token should be valid")
+			}
+
+			// Verify claims are preserved
+			for key, expectedValue := range tt.claims {
+				actualValue, ok := mapClaims[key]
+				if !ok {
+					t.Errorf("Expected claim key %s not found", key)
+					continue
+				}
+
+				// Convert Unix timestamps if necessary
+				if key == "exp" || key == "iat" {
+					if expectedFloat, ok := expectedValue.(float64); ok {
+						expectedValue = int64(expectedFloat)
+					}
+					if actualFloat, ok := actualValue.(float64); ok {
+						actualValue = int64(actualFloat)
+					}
+				}
+
+				if actualValue != expectedValue {
+					t.Errorf("Expected claim value %v for key %s, got %v", expectedValue, key, actualValue)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateAndValidateToken(t *testing.T) {
+	secret := []byte("test-secret")
+
+	// Generate token using GenerateTokenWithDefaultClaims
+	claims := map[string]interface{}{
+		"user_id": "123",
+		"exp":     time.Now().Add(time.Hour).Unix(),
+	}
+
+	tokenString, err := GenerateTokenWithDefaultClaims(secret, claims)
+	if err != nil {
+		t.Fatalf("Failed to generate token: %v", err)
+	}
+
+	// Validate the token using middleware
+	handler := New(secret)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		retrievedClaims, ok := GetClaims(r.Context())
+		if !ok {
+			t.Error("Expected claims in context")
+		}
+		if retrievedClaims == nil {
+			t.Error("Claims should not be nil")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenString)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rr.Code)
+	}
+}
+
+func TestGenerateTokenWithCustomClaims(t *testing.T) {
+	secret := []byte("test-secret")
+
+	type CustomClaims struct {
+		UserID string `json:"user_id"`
+		Email  string `json:"email"`
+		jwt.RegisteredClaims
+	}
+
+	claims := CustomClaims{
+		UserID: "123",
+		Email:  "test@example.com",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+
+	tokenString, err := GenerateToken(secret, claims)
+	if err != nil {
+		t.Fatalf("Failed to generate token: %v", err)
+	}
+
+	if tokenString == "" {
+		t.Error("Token string should not be empty")
+	}
+
+	// Verify the token can be parsed
+	parsedClaims := &CustomClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, parsedClaims, func(token *jwt.Token) (interface{}, error) {
+		return secret, nil
+	})
+
+	if err != nil {
+		t.Fatalf("Failed to parse generated token: %v", err)
+	}
+
+	if !token.Valid {
+		t.Error("Generated token should be valid")
+	}
+
+	if parsedClaims.UserID != "123" {
+		t.Errorf("Expected UserID 123, got %s", parsedClaims.UserID)
+	}
+
+	if parsedClaims.Email != "test@example.com" {
+		t.Errorf("Expected Email test@example.com, got %s", parsedClaims.Email)
+	}
+}
+
+func TestGenerateTokenWithCustomSigningMethod(t *testing.T) {
+	secret := []byte("test-secret")
+
+	claims := jwt.MapClaims{
+		"user_id": "123",
+		"exp":     time.Now().Add(time.Hour).Unix(),
+	}
+
+	// Generate token with HS512
+	tokenString, err := GenerateToken(secret, claims, WithSigningMethod(jwt.SigningMethodHS512))
+	if err != nil {
+		t.Fatalf("Failed to generate token: %v", err)
+	}
+
+	// Verify the token uses HS512
+	token, _ := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return secret, nil
+	})
+
+	if token.Method != jwt.SigningMethodHS512 {
+		t.Errorf("Expected signing method HS512, got %v", token.Method)
+	}
+}

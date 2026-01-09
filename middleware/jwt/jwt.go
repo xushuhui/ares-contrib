@@ -163,3 +163,38 @@ func GetClaimsWithKey(ctx context.Context, key string) (jwt.Claims, bool) {
 	claims, ok := ctx.Value(contextKey(key)).(jwt.Claims)
 	return claims, ok
 }
+
+// GenerateToken creates a signed JWT token with the given claims and middleware configuration
+// This function uses the same signing key and method as configured in the middleware
+func GenerateToken(signingKey []byte, claims jwt.Claims, opts ...Option) (string, error) {
+	o := &options{
+		signingKey:    signingKey,
+		signingMethod: jwt.SigningMethodHS256,
+		contextKey:    "user",
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	if o.signingKey == nil {
+		return "", errors.New("signing key is nil")
+	}
+
+	token := jwt.NewWithClaims(o.signingMethod, claims)
+	tokenString, err := token.SignedString(o.signingKey)
+	if err != nil {
+		return "", err
+	}
+
+	return tokenString, nil
+}
+
+// GenerateTokenWithDefaultClaims creates a signed JWT token with default MapClaims
+// This is a convenience function for simple use cases
+func GenerateTokenWithDefaultClaims(signingKey []byte, claims map[string]interface{}, opts ...Option) (string, error) {
+	mapClaims := jwt.MapClaims{}
+	for k, v := range claims {
+		mapClaims[k] = v
+	}
+	return GenerateToken(signingKey, mapClaims, opts...)
+}
